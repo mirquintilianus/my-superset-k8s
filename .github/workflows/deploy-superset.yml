@@ -1,51 +1,36 @@
-name: Ephemeral Superset with TryCloudflare
+name: Ephemeral Superset with Docker Compose
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Trigger manually from the GitHub Actions tab
 
 jobs:
-  deploy-superset:
+  launch-superset:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Minikube (Kubernetes)
-        uses: medyagh/setup-minikube@master
-        with:
-          container-runtime: docker
-          kubernetes-version: v1.30.0
-
-      - name: Setup Helm
-        uses: azure/setup-helm@v4
-
-      - name: Add Apache Superset Helm Repo
+      - name: Clone Official Superset Repository
         run: |
-          helm repo add superset https://github.io
-          helm repo update
+          echo "Cloning the Apache Superset source files..."
+          git clone --depth 1 https://github.com superset-src
 
-      - name: Deploy Superset with Minimal Resource Config
+      - name: Start Superset via Docker Compose
         run: |
-          helm install superset superset/superset \
-            --set bootstrapScript="pip install mysqlclient elasticsearch-dbapi" \
-            --set supersetNode.resources.requests.cpu="500m" \
-            --set supersetNode.resources.requests.memory="1Gi" \
-            --set supersetWorker.resources.requests.cpu="500m" \
-            --set supersetWorker.resources.requests.memory="1Gi"
-
-      - name: Wait for Superset Pods to be Ready
+          cd superset-src
+          echo "Starting Superset containers (this downloads and builds components)..."
+          # Using the non-dev profile runs a lightweight, production-like version
+          docker compose -f docker-compose-non-dev.yml up -d
+          
+      - name: Wait for Web UI to Initialize
         run: |
-          echo "Waiting for Superset to initialize... (This can take 3-5 minutes)"
-          kubectl wait --namespace default \
-            --for=condition=ready pod \
-            --selector=app=superset \
-            --timeout=400s
-
-      - name: Port-Forward Kubernetes Service
-        run: |
-          # Forward Superset to the runner's local port 8088 in the background
-          kubectl port-forward svc/superset 8088:8088 &
-          sleep 5
+          echo "Waiting for the web interface on port 8088 to become responsive..."
+          # Poll the local port until it returns a successful HTTP status code
+          until $(curl --output /dev/null --silent --head --fail http://localhost:8088); do
+            printf '.'
+            sleep 5
+          done
+          echo -e "\nSuperset is fully up and running locally!"
 
       - name: Setup cloudflared
         uses: AnimMouse/setup-cloudflared@v2
@@ -61,5 +46,7 @@ jobs:
           echo "👉 LOOK UPWARDS IN THE CONSOLE LOG FOR THE PUBLIC URL 👈"
           echo "It will look like: https://trycloudflare.com"
           echo "--------------------------------------------------------"
-          # Keeps the job running so you can use the UI (Max 6 hours)
-          sleep 21600 
+          echo "Default Credentials -> User: admin | Pass: admin"
+          echo "--------------------------------------------------------"
+          # Keeps the runner alive for up to 6 hours or until you click 'Cancel'
+          sleep 21600
