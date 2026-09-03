@@ -1,7 +1,7 @@
 name: Deploy Ephemeral Superset
 
 on:
-  workflow_dispatch: # Allows manual trigger from the GitHub Actions UI
+  workflow_dispatch:
 
 jobs:
   deploy-superset:
@@ -22,20 +22,32 @@ jobs:
           helm repo add superset https://apache.github.io/superset
           helm repo update
           
-          # Deploying with minimalist configuration for fast CI startup
+          # Added --wait=false to ensure Helm doesn't block the runner if pods take time to initialize
           helm install superset superset/superset \
             --set persistence.enabled=false \
             --set postgresql.persistence.enabled=false \
             --set supersetNode.replicaCount=1 \
-            --set supersetWorker.replicaCount=1
-            
-          echo "Waiting for Superset pods to spin up..."
-          kubectl rollout status deployment/superset --timeout=5m
+            --set supersetWorker.replicaCount=1 \
+            --wait=false
 
       - name: Install Cloudflared CLI
         run: |
           curl -L --output cloudflared.deb https://github.com
           sudo dpkg -i cloudflared.deb
+
+      - name: Background Port-Forward & Dynamic Health Check
+        run: |
+          echo "Establishing port-forwarding to local runner environment..."
+          # Start port forwarding in the background and redirect logs to prevent terminal spam
+          kubectl port-forward svc/superset 8088:8088 > /dev/null 2>&1 &
+          
+          echo "Waiting for Superset Webserver to become responsive (this takes a few minutes)..."
+          # Loop until curl successfully connects and gets a response from the login page
+          until $(curl --output /dev/null --silent --head --fail http://localhost:8088/login/); do
+            printf '.'
+            sleep 5
+          done
+          echo -e "\nSuperset is up and running locally!"
 
       - name: Start Cloudflare Quick Tunnel & Expose Service
         run: |
@@ -43,12 +55,5 @@ jobs:
           echo "🚀 GENERATING YOUR PUBLIC ACCESS LINK BELOW..."
           echo "--------------------------------------------------------"
           
-          # Background port-forwarding from the k8s cluster to the local runner network
-          kubectl port-forward svc/superset 8088:8088 &
-          
-          # Sleep briefly to ensure port-forwarding channel is established
-          sleep 5 
-          
-          # Run the cloudflared quick tunnel. 
-          # It routes to the port-forwarded localhost endpoint.
+          # Launch cloudflared tunnel now that the application is fully ready
           cloudflared tunnel --url http://localhost:8088
