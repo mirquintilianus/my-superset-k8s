@@ -17,31 +17,24 @@ jobs:
       with:
         cluster_name: superset-free-node
 
-    # 2. Download the official package directly to a simple local file
-    - name: ⬇️ Download Superset Package File
+    # 2. Deploy directly via Helm using the official Bitnami OCI Registry endpoint
+    - name: 🚀 Install Superset via Bitnami OCI Registry
       run: |
-        curl -L "https://github.com" -o superset.tgz
-
-    # 3. Deploy using the localized archive file path
-    - name: 🚀 Install Superset from Local Package
-      run: |
-        helm install superset ./superset.tgz \
+        helm install superset oci://registry-1.docker.io/bitnamicharts/superset \
           --namespace analytical-apps \
           --create-namespace \
-          --set supersetWeb.replicaCount=1 \
-          --set supersetWorker.replicaCount=0 \
-          --set supersetCeleryBeat.enabled=false \
-          --set postgresql.persistence.enabled=false \
-          --set redis.master.persistence.enabled=false \
-          --set init.adminUser.password=AdminPassword123
+          --set replicaCount=1 \
+          --set postgresql.enabled=false \
+          --set redis.enabled=false \
+          --set auth.adminPassword=AdminPassword123
 
-    # 4. Block execution until the core web server reads healthy
+    # 3. Block execution until the core web server reads healthy
     - name: ⏳ Await Container Initialization
       run: |
         echo "Waiting up to 5 minutes for the light web container to load..."
         kubectl rollout status deployment/superset -n analytical-apps --timeout=300s
 
-    # 5. Open the reverse proxy network pipe to Cloudflare for a free public link
+    # 4. Open the reverse proxy network pipe to Cloudflare for a free public link
     - name: 🌐 Launch Anonymous Public URL Tunnel
       run: |
         curl -L --output cloudflared.deb https://github.com
