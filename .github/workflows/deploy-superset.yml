@@ -17,22 +17,25 @@ jobs:
       with:
         cluster_name: superset-free-node
 
-    # 2. Deploy directly via Helm using the official Bitnami OCI Registry endpoint
+    # 2. Deploy via OCI Registry with lightweight internal dependencies active
     - name: 🚀 Install Superset via Bitnami OCI Registry
       run: |
         helm install superset oci://registry-1.docker.io/bitnamicharts/superset \
           --namespace analytical-apps \
           --create-namespace \
           --set replicaCount=1 \
-          --set postgresql.enabled=false \
-          --set redis.enabled=false \
+          --set worker.replicaCount=0 \
+          --set celeryBeat.enabled=false \
+          --set postgresql.persistence.enabled=false \
+          --set redis.architecture=standalone \
+          --set redis.master.persistence.enabled=false \
           --set auth.adminPassword=AdminPassword123
 
-    # 3. Block execution until the core web server reads healthy
+    # 3. Block execution until Bitnami's web server deployment reads healthy
     - name: ⏳ Await Container Initialization
       run: |
-        echo "Waiting up to 5 minutes for the light web container to load..."
-        kubectl rollout status deployment/superset -n analytical-apps --timeout=300s
+        echo "Waiting up to 5 minutes for the Bitnami web container to load..."
+        kubectl rollout status deployment/superset-web -n analytical-apps --timeout=300s
 
     # 4. Open the reverse proxy network pipe to Cloudflare for a free public link
     - name: 🌐 Launch Anonymous Public URL Tunnel
@@ -40,7 +43,8 @@ jobs:
         curl -L --output cloudflared.deb https://github.com
         sudo dpkg -i cloudflared.deb
         
-        kubectl port-forward svc/superset 8088:8088 -n analytical-apps &
+        # Map the correct Bitnami service name (superset-web) to runner port 8088
+        kubectl port-forward svc/superset-web 8088:8088 -n analytical-apps &
         sleep 5
         
         echo "=========================================================="
