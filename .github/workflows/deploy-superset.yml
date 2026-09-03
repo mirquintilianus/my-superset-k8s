@@ -1,54 +1,65 @@
-name: Ephemeral Superset Public Deployment
+name: Ephemeral Superset with TryCloudflare
 
 on:
-  workflow_dispatch: 
+  workflow_dispatch:
 
 jobs:
-  deploy-and-expose:
+  deploy-superset:
     runs-on: ubuntu-latest
-    
     steps:
-    - name: 📥 Checkout Repository Code
-      uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-    # 1. Spin up the local Kubernetes single-node environment inside the runner
-    - name: ☸️ Boot Up Local Kubernetes Node (KinD)
-      uses: helm/kind-action@v1.10.0
-      with:
-        cluster_name: superset-free-node
+      - name: Setup Minikube (Kubernetes)
+        uses: medyagh/setup-minikube@master
+        with:
+          container-runtime: docker
+          kubernetes-version: v1.30.0
 
-    # 2. Deploy via OCI Registry with lightweight internal dependencies active
-    - name: 🚀 Install Superset via Bitnami OCI Registry
-      run: |
-        helm install superset oci://registry-1.docker.io/bitnamicharts/superset \
-          --namespace analytical-apps \
-          --create-namespace \
-          --set replicaCount=1 \
-          --set worker.replicaCount=0 \
-          --set celeryBeat.enabled=false \
-          --set postgresql.persistence.enabled=false \
-          --set redis.architecture=standalone \
-          --set redis.master.persistence.enabled=false \
-          --set auth.adminPassword=AdminPassword123
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
 
-    # 3. Block execution until Bitnami's web server deployment reads healthy
-    - name: ⏳ Await Container Initialization
-      run: |
-        echo "Waiting up to 5 minutes for the Bitnami web container to load..."
-        kubectl rollout status deployment/superset-web -n analytical-apps --timeout=300s
+      - name: Add Apache Superset Helm Repo
+        run: |
+          helm repo add superset https://github.io
+          helm repo update
 
-    # 4. Open the reverse proxy network pipe to Cloudflare for a free public link
-    - name: 🌐 Launch Anonymous Public URL Tunnel
-      run: |
-        curl -L --output cloudflared.deb https://github.com
-        sudo dpkg -i cloudflared.deb
-        
-        # Map the correct Bitnami service name (superset-web) to runner port 8088
-        kubectl port-forward svc/superset-web 8088:8088 -n analytical-apps &
-        sleep 5
-        
-        echo "=========================================================="
-        echo "🎉 SUCCESS! LOOK BELOW FOR YOUR TEMPORARY PUBLIC LINK 🎉"
-        echo "=========================================================="
-        
-        cloudflared tunnel --url http://localhost:8088
+      - name: Deploy Superset with Minimal Resource Config
+        run: |
+          helm install superset superset/superset \
+            --set bootstrapScript="pip install mysqlclient elasticsearch-dbapi" \
+            --set supersetNode.resources.requests.cpu="500m" \
+            --set supersetNode.resources.requests.memory="1Gi" \
+            --set supersetWorker.resources.requests.cpu="500m" \
+            --set supersetWorker.resources.requests.memory="1Gi"
+
+      - name: Wait for Superset Pods to be Ready
+        run: |
+          echo "Waiting for Superset to initialize... (This can take 3-5 minutes)"
+          kubectl wait --namespace default \
+            --for=condition=ready pod \
+            --selector=app=superset \
+            --timeout=400s
+
+      - name: Port-Forward Kubernetes Service
+        run: |
+          # Forward Superset to the runner's local port 8088 in the background
+          kubectl port-forward svc/superset 8088:8088 &
+          sleep 5
+
+      - name: Setup cloudflared
+        uses: AnimMouse/setup-cloudflared@v2
+
+      - name: Start TryCloudflare Tunnel
+        uses: AnimMouse/setup-cloudflared/tunnel@v2
+        with:
+          url: http://localhost:8088
+
+      - name: Keep Runner Alive
+        run: |
+          echo "--------------------------------------------------------"
+          echo "👉 LOOK UPWARDS IN THE CONSOLE LOG FOR THE PUBLIC URL 👈"
+          echo "It will look like: https://trycloudflare.com"
+          echo "--------------------------------------------------------"
+          # Keeps the job running so you can use the UI (Max 6 hours)
+          sleep 21600 
