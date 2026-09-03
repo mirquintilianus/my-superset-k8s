@@ -17,10 +17,15 @@ jobs:
       with:
         cluster_name: superset-free-node
 
-    # 2. Deploy directly using the raw, absolute URL path of the chart archive
-    - name: 🚀 Install Superset via Direct URL
+    # 2. Download the official package directly to a simple local file
+    - name: ⬇️ Download Superset Package File
       run: |
-        helm install superset https://github.com \
+        curl -L "https://github.com" -o superset.tgz
+
+    # 3. Deploy using the localized archive file path
+    - name: 🚀 Install Superset from Local Package
+      run: |
+        helm install superset ./superset.tgz \
           --namespace analytical-apps \
           --create-namespace \
           --set supersetWeb.replicaCount=1 \
@@ -30,13 +35,13 @@ jobs:
           --set redis.master.persistence.enabled=false \
           --set init.adminUser.password=AdminPassword123
 
-    # 3. Block execution until the core web server reads healthy
+    # 4. Block execution until the core web server reads healthy
     - name: ⏳ Await Container Initialization
       run: |
         echo "Waiting up to 5 minutes for the light web container to load..."
         kubectl rollout status deployment/superset -n analytical-apps --timeout=300s
 
-    # 4. Open the reverse proxy network pipe to Cloudflare for a free public link
+    # 5. Open the reverse proxy network pipe to Cloudflare for a free public link
     - name: 🌐 Launch Anonymous Public URL Tunnel
       run: |
         curl -L --output cloudflared.deb https://github.com
