@@ -11,19 +11,16 @@ jobs:
     - name: 📥 Checkout Repository Code
       uses: actions/checkout@v4
 
+    # 1. Spin up the local Kubernetes single-node environment inside the runner
     - name: ☸️ Boot Up Local Kubernetes Node (KinD)
       uses: helm/kind-action@v1.10.0
       with:
         cluster_name: superset-free-node
 
-    - name: 📦 Sync Apache Superset Helm Repo
+    # 2. Deploy directly using the raw, absolute URL path of the chart archive
+    - name: 🚀 Install Superset via Direct URL
       run: |
-        helm repo add superset https://github.io
-        helm repo update
-
-    - name: 🚀 Install Superset via Helm
-      run: |
-        helm install superset superset/superset \
+        helm install superset https://github.com \
           --namespace analytical-apps \
           --create-namespace \
           --set supersetWeb.replicaCount=1 \
@@ -33,11 +30,13 @@ jobs:
           --set redis.master.persistence.enabled=false \
           --set init.adminUser.password=AdminPassword123
 
+    # 3. Block execution until the core web server reads healthy
     - name: ⏳ Await Container Initialization
       run: |
         echo "Waiting up to 5 minutes for the light web container to load..."
         kubectl rollout status deployment/superset -n analytical-apps --timeout=300s
 
+    # 4. Open the reverse proxy network pipe to Cloudflare for a free public link
     - name: 🌐 Launch Anonymous Public URL Tunnel
       run: |
         curl -L --output cloudflared.deb https://github.com
