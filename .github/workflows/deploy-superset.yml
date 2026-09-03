@@ -1,0 +1,63 @@
+name: Ephemeral Superset Public Deployment
+
+on:
+  # Allows you to manually trigger this pipeline anytime from the GitHub UI
+  workflow_dispatch: 
+
+jobs:
+  deploy-and-expose:
+    runs-on: ubuntu-latest
+    
+    steps:
+    # 1. Pull down the files from your GitHub repository into the virtual runner environment
+    - name: 📥 Checkout Repository Code
+      uses: actions/checkout@v4
+
+    # 2. Spin up a lightweight local Kubernetes node inside Docker on the runner
+    - name: ☸️ Boot Up Local Kubernetes Node (KinD)
+      uses: helm/kind-action@v1.10.0
+      with:
+        cluster_name: superset-free-node
+
+    # 3. Add and update the official Apache Superset application package repository
+    - name: 📦 Sync Apache Superset Helm Repo
+      run: |
+        helm repo add superset https://github.io
+        helm repo update
+
+    # 4. Deploy Apache Superset with custom resource limits tuned for a free environment
+    - name: 🚀 Install Superset via Helm
+      run: |
+        helm install superset superset/superset \
+          --namespace analytical-apps \
+          --create-namespace \
+          --set supersetWeb.replicaCount=1 \
+          --set supersetWorker.replicaCount=1 \
+          --set postgresql.persistence.enabled=false \
+          --set redis.master.persistence.enabled=false \
+          --set init.adminUser.password=AdminPassword123 # You can change this text password
+
+    # 5. Monitor and wait for the Kubernetes containers to successfully initialize
+    - name: ⏳ Await Container Initialization
+      run: |
+        echo "Waiting up to 3 minutes for Superset components to settle..."
+        kubectl rollout status deployment/superset -n analytical-apps --timeout=180s
+
+    # 6. Install Cloudflare networking utilities and create an open web tunnel
+    - name: 🌐 Launch Anonymous Public URL Tunnel
+      run: |
+        # A. Download and install the secure Cloudflare tunnel binary
+        curl -L --output cloudflared.deb https://github.com
+        sudo dpkg -i cloudflared.deb
+        
+        # B. Port-forward internal Kubernetes network traffic to the runner's local port 8088
+        kubectl port-forward svc/superset 8088:8088 -n analytical-apps &
+        sleep 5
+        
+        # C. Generate the public URL link and print it visually inside the GitHub actions window
+        echo "=========================================================="
+        echo "🎉 SUCCESS! LOOK BELOW FOR YOUR TEMPORARY PUBLIC LINK 🎉"
+        echo "=========================================================="
+        
+        # This blocks execution and streams traffic live to your web browser
+        cloudflared tunnel --url http://localhost:8088
